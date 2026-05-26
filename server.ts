@@ -284,12 +284,29 @@ async function startServer() {
 
   app.post("/api/chat/auto-touch", (req, res) => {
     try {
-      const { deviceId, phone, name, deviceInfo, birthdayConfig, friends } = req.body;
+      const { deviceId, phone, name, deviceInfo, birthdayConfig, friends, ref } = req.body;
       if (!deviceId) return res.status(400).json({ error: "Missing deviceId" });
 
       const currentPhoneKey = phone ? phone.replace(/[^0-9]/g, '') : '';
       let targetFolder = '';
       let realPhoneMigrated = false;
+
+      // Handle referral in auto-touch
+      if (ref) {
+        try {
+          const refPath = getChatPath(ref);
+          const refCountPath = path.join(refPath, 'referrals.json');
+          let referrals = [];
+          if (fs.existsSync(refCountPath)) referrals = JSON.parse(fs.readFileSync(refCountPath, 'utf8'));
+          const visitorId = currentPhoneKey || deviceId;
+          if (visitorId && !referrals.includes(visitorId)) {
+            referrals.push(visitorId);
+            fs.writeFileSync(refCountPath, JSON.stringify(referrals, null, 2));
+          }
+        } catch (refe) {
+          console.error("Auto-touch referral processing error:", refe);
+        }
+      }
 
       // Count upload user directory sizes
       let filesCount = 0;

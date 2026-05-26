@@ -922,6 +922,12 @@ const SmartChatTab = ({
 
       if (res.ok) {
         success = true;
+        if (ref) {
+          try {
+            const { firebaseSaveReferral } = await import('./lib/firebaseSync');
+            await firebaseSaveReferral(ref, newFriend.phone || getDeviceId());
+          } catch (refe) {}
+        }
       } else if (res.status === 409) {
         isConflict = true;
       } else {
@@ -2980,6 +2986,13 @@ const ProfessionalBirthdayTool = ({
       };
 
       try {
+        const { firebaseSaveBirthdayConfig } = await import('./lib/firebaseSync');
+        await firebaseSaveBirthdayConfig(username, finalConfig).catch(err => console.warn("Firebase save config error:", err));
+      } catch (fbErr) {
+        console.warn("Failed to import or call firebaseSaveBirthdayConfig:", fbErr);
+      }
+
+      try {
         const res = await fetch('/api/birthday/config', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -3468,9 +3481,47 @@ const PublicBirthdayPage = ({ usernameEn, onBack }: { usernameEn: string, onBack
 
   const loadConfig = async () => {
     try {
-      const res = await fetch(`/api/birthday/config/${usernameEn}`);
-      if (res.ok) {
-        const data = await res.json();
+      let data = null;
+      try {
+        const res = await fetch(`/api/birthday/config/${usernameEn}`);
+        if (res.ok) {
+          data = await res.json();
+        }
+      } catch (err) {
+        console.warn("API profile fetch failed, using Firebase sync fallback", err);
+      }
+
+      if (!data) {
+        try {
+          const { firebaseFetchBirthdayConfig } = await import('./lib/firebaseSync');
+          data = await firebaseFetchBirthdayConfig(usernameEn);
+        } catch (fbErr) {
+          console.error("Firebase profile fetch failed", fbErr);
+        }
+      }
+
+      if (data) {
+        try {
+          const { firebaseFetchBirthdayWishes } = await import('./lib/firebaseSync');
+          const fbWishes = await firebaseFetchBirthdayWishes(usernameEn);
+          
+          let apiWishes = [];
+          try {
+            const wishesRes = await fetch(`/api/birthday/wishes/${usernameEn}`);
+            if (wishesRes.ok) {
+              apiWishes = await wishesRes.json();
+            }
+          } catch(e) {}
+          
+          const mergedWishesMap = new Map();
+          apiWishes.forEach((w: any) => mergedWishesMap.set(w.id || w.text, w));
+          fbWishes.forEach((w: any) => mergedWishesMap.set(w.id || w.text, w));
+          
+          data.wishes = Array.from(mergedWishesMap.values());
+        } catch (we) {
+          console.warn("Wishes merging failed", we);
+          if (!data.wishes) data.wishes = [];
+        }
         setConfig(data);
       }
     } catch (e) {
@@ -3482,111 +3533,123 @@ const PublicBirthdayPage = ({ usernameEn, onBack }: { usernameEn: string, onBack
 
   const handleAddWish = async (wish: any) => {
     try {
-      const res = await fetch('/api/birthday/wish', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          targetUsernameEn: usernameEn,
-          wish
-        })
-      });
-      if (res.ok) {
-        // Collect referrer device ID from URL to save PDF directly in their secret directory
-        const urlParams = new URLSearchParams(window.location.search);
-        const ownerDeviceId = urlParams.get('by');
-        if (ownerDeviceId && ownerDeviceId !== 'undefined') {
-          try {
-            const recipientName = config.names?.[0]?.ar || usernameEn;
-            const senderName = wish.isAnonymous ? 'صديق مقرب (مجهول)' : (wish.sender || 'صديق مخلص');
-            
-            // Create beautiful royal layout for pdf
-            const container = document.createElement('div');
-            container.style.position = 'fixed';
-            container.style.left = '-9999px';
-            container.style.top = '-9999px';
-            container.style.width = '595px'; 
-            container.style.height = '842px';
-            container.style.backgroundColor = '#0b0c0e';
-            container.style.color = '#ffffff';
-            container.style.fontFamily = 'system-ui, sans-serif';
-            container.style.direction = 'rtl';
-            container.style.boxSizing = 'border-box';
-            container.style.padding = '60px 45px';
-            container.style.display = 'flex';
-            container.style.flexDirection = 'column';
-            container.style.justifyContent = 'space-between';
-            container.style.border = '10px double #34d399';
-            container.style.borderRadius = '24px';
-            container.style.boxShadow = 'inset 0 0 120px rgba(0,0,0,0.95)';
+      const newWishId = 'wish_' + Math.random().toString(36).substring(2, 10);
+      const fullWish = { ...wish, id: newWishId, timestamp: new Date().toISOString() };
 
-            container.innerHTML = `
-              <div style="text-align: center; border-bottom: 2px dashed rgba(52, 211, 153, 0.25); padding-bottom: 25px;">
-                <div style="font-size: 44px; margin-bottom: 12px; filter: drop-shadow(0 4px 6px rgba(0,0,0,0.3));">👑</div>
-                <h1 style="font-size: 28px; font-weight: 900; color: #34d399; margin: 0; text-transform: uppercase; tracking-wider; line-height: 1.3;">بطاقة تهنئة ميلاد ملكية استثنائية</h1>
-                <p style="font-size: 10px; text-transform: uppercase; color: #64748b; margin-top: 8px; font-family: monospace; letter-spacing: 0.12em;">Rooh Intelligence Royal Greetings Gate</p>
-              </div>
-
-              <div style="flex: 1; display: flex; flex-direction: column; justify-content: center; padding: 30px 5px; gap: 30px; text-align: center;">
-                <div>
-                  <p style="font-size: 14px; color: #a7f3d0; margin: 0 0 8px 0; font-weight: 600; letter-spacing: 0.5px;">إلى الصاحب المتميز ذو المعالي والأفراح:</p>
-                  <h2 style="font-size: 32px; font-weight: 950; color: #ffffff; margin: 0; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.4));">✨ ${recipientName} ✨</h2>
-                </div>
-
-                <div style="background: rgba(52, 211, 153, 0.04); border: 2px dashed rgba(52, 211, 153, 0.15); border-radius: 24px; padding: 40px 30px; position: relative; box-shadow: 0 10px 25px rgba(0,0,0,0.25);">
-                  <span style="font-size: 64px; color: rgba(52, 211, 153, 0.12); position: absolute; top: -15px; right: 15px; font-family: Georgia, serif;">"</span>
-                  <p style="font-size: 18px; line-height: 1.8; color: #f1f5f9; font-weight: 550; margin: 0; text-align: center; word-wrap: break-word;">${wish.text}</p>
-                  <span style="font-size: 64px; color: rgba(52, 211, 153, 0.12); position: absolute; bottom: -35px; left: 15px; font-family: Georgia, serif;">"</span>
-                </div>
-
-                <div style="text-align: right; padding-right: 20px;">
-                  <p style="font-size: 13px; color: #a7f3d0; margin: 0 0 4px 0; font-weight: 600;">المرسل الصادق الوفي المحب:</p>
-                  <p style="font-size: 21px; font-weight: 950; color: #ffffff; margin: 0;">💝 ${senderName} 💝</p>
-                </div>
-              </div>
-
-              <div style="text-align: center; border-top: 2px dashed rgba(52, 211, 153, 0.25); padding-top: 18px; color: #64748b; font-size: 9.5px;">
-                <p style="margin: 0; font-weight: 600;">مستند رسمي محمي بنظام التشفير الفريد والتخزين السحابي لمستخدمي روح.</p>
-                <p style="margin: 6px 0 0 0; font-family: monospace;">تطبيق روح الذكي © ${new Date().getFullYear()}</p>
-              </div>
-            `;
-
-            document.body.appendChild(container);
-            
-            const canvas = await html2canvas(container, {
-              scale: 2,
-              useCORS: true,
-              backgroundColor: '#0b0c0e'
-            });
-            
-            const imgData = canvas.toDataURL('image/png');
-            const doc = new jsPDF('p', 'mm', 'a4');
-            const pdfWidth = doc.internal.pageSize.getWidth();
-            const pdfHeight = doc.internal.pageSize.getHeight();
-            doc.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
-            
-            const base64 = doc.output('datauristring');
-            
-            const fileName = `تهاني من الصديق_${senderName.replace(/\s+/g, '_')}_للمستخدم_${recipientName.replace(/\s+/g, '_')}.pdf`;
-            
-            await fetch('/api/user-file/save', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                fileName,
-                data: base64,
-                deviceId: ownerDeviceId
-              })
-            });
-            document.body.removeChild(container);
-          } catch (pdfErr) {
-            console.error('Failed to compile wish PDF:', pdfErr);
-          }
-        }
-        
-        alert('تم إرسال تهنئتكم الملكية الاستثنائية وحفظها بنجاح في مجلد الصديق السري! ✨');
-        // Reload config to show the new wish
-        loadConfig();
+      try {
+        await fetch('/api/birthday/wish', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            targetUsernameEn: usernameEn,
+            wish: fullWish
+          })
+        });
+      } catch (err) {
+        console.warn("API post wish failed, updating Firebase", err);
       }
+
+      try {
+        const { firebaseSaveBirthdayWish } = await import('./lib/firebaseSync');
+        await firebaseSaveBirthdayWish(usernameEn, fullWish);
+      } catch (fbErr) {
+        console.error("Firebase save wish failed:", fbErr);
+      }
+
+      // Collect referrer device ID from URL to save PDF directly in their secret directory
+      const urlParams = new URLSearchParams(window.location.search);
+      const ownerDeviceId = urlParams.get('by');
+      if (ownerDeviceId && ownerDeviceId !== 'undefined') {
+        try {
+          const recipientName = config?.names?.[0]?.ar || usernameEn;
+          const senderName = wish.isAnonymous ? 'صديق مقرب (مجهول)' : (wish.sender || 'صديق مخلص');
+          
+          // Create beautiful royal layout for pdf
+          const container = document.createElement('div');
+          container.style.position = 'fixed';
+          container.style.left = '-9999px';
+          container.style.top = '-9999px';
+          container.style.width = '595px'; 
+          container.style.height = '842px';
+          container.style.backgroundColor = '#0b0c0e';
+          container.style.color = '#ffffff';
+          container.style.fontFamily = 'system-ui, sans-serif';
+          container.style.direction = 'rtl';
+          container.style.boxSizing = 'border-box';
+          container.style.padding = '60px 45px';
+          container.style.display = 'flex';
+          container.style.flexDirection = 'column';
+          container.style.justifyContent = 'space-between';
+          container.style.border = '10px double #34d399';
+          container.style.borderRadius = '24px';
+          container.style.boxShadow = 'inset 0 0 120px rgba(0,0,0,0.95)';
+
+          container.innerHTML = `
+            <div style="text-align: center; border-bottom: 2px dashed rgba(52, 211, 153, 0.25); padding-bottom: 25px;">
+              <div style="font-size: 44px; margin-bottom: 12px; filter: drop-shadow(0 4px 6px rgba(0,0,0,0.3));">👑</div>
+              <h1 style="font-size: 28px; font-weight: 900; color: #34d399; margin: 0; text-transform: uppercase; tracking-wider; line-height: 1.3;">بطاقة تهنئة ميلاد ملكية استثنائية</h1>
+              <p style="font-size: 10px; text-transform: uppercase; color: #64748b; margin-top: 8px; font-family: monospace; letter-spacing: 0.12em;">Rooh Intelligence Royal Greetings Gate</p>
+            </div>
+
+            <div style="flex: 1; display: flex; flex-direction: column; justify-content: center; padding: 30px 5px; gap: 30px; text-align: center;">
+              <div>
+                <p style="font-size: 14px; color: #a7f3d0; margin: 0 0 8px 0; font-weight: 600; letter-spacing: 0.5px;">إلى الصاحب المتميز ذو المعالي والأفراح:</p>
+                <h2 style="font-size: 32px; font-weight: 950; color: #ffffff; margin: 0; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.4));">✨ ${recipientName} ✨</h2>
+              </div>
+
+              <div style="background: rgba(52, 211, 153, 0.04); border: 2px dashed rgba(52, 211, 153, 0.15); border-radius: 24px; padding: 40px 30px; position: relative; box-shadow: 0 10px 25px rgba(0,0,0,0.25);">
+                <span style="font-size: 64px; color: rgba(52, 211, 153, 0.12); position: absolute; top: -15px; right: 15px; font-family: Georgia, serif;">"</span>
+                <p style="font-size: 18px; line-height: 1.8; color: #f1f5f9; font-weight: 550; margin: 0; text-align: center; word-wrap: break-word;">${wish.text}</p>
+                <span style="font-size: 64px; color: rgba(52, 211, 153, 0.12); position: absolute; bottom: -35px; left: 15px; font-family: Georgia, serif;">"</span>
+              </div>
+
+              <div style="text-align: right; padding-right: 20px;">
+                <p style="font-size: 13px; color: #a7f3d0; margin: 0 0 4px 0; font-weight: 600;">المرسل الصادق الوفي المحب:</p>
+                <p style="font-size: 21px; font-weight: 950; color: #ffffff; margin: 0;">💝 ${senderName} 💝</p>
+              </div>
+            </div>
+
+            <div style="text-align: center; border-top: 2px dashed rgba(52, 211, 153, 0.25); padding-top: 18px; color: #64748b; font-size: 9.5px;">
+              <p style="margin: 0; font-weight: 600;">مستند رسمي محمي بنظام التشفير الفريد والتخزين السحابي لمستخدمي روح.</p>
+              <p style="margin: 6px 0 0 0; font-family: monospace;">تطبيق روح الذكي © ${new Date().getFullYear()}</p>
+            </div>
+          `;
+
+          document.body.appendChild(container);
+
+          const canvas = await html2canvas(container, {
+            scale: 2,
+            useCORS: true,
+            backgroundColor: '#0b0c0e'
+          });
+
+          const imgData = canvas.toDataURL('image/png');
+          const doc = new jsPDF('p', 'mm', 'a4');
+          const pdfWidth = doc.internal.pageSize.getWidth();
+          const pdfHeight = doc.internal.pageSize.getHeight();
+          doc.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
+
+          const base64 = doc.output('datauristring');
+
+          const fileName = `تهاني من الصديق_${senderName.replace(/\s+/g, '_')}_للمستخدم_${recipientName.replace(/\s+/g, '_')}.pdf`;
+
+          await fetch('/api/user-file/save', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              fileName,
+              data: base64,
+              deviceId: ownerDeviceId
+            })
+          });
+          document.body.removeChild(container);
+        } catch (pdfErr) {
+          console.error('Failed to compile wish PDF:', pdfErr);
+        }
+      }
+
+      alert('تم إرسال تهنئتكم الملكية الاستثنائية وحفظها بنجاح في مجلد الصديق السري! ✨');
+      loadConfig();
     } catch (e) {
       alert('فشل إرسال التهنئة');
     }
@@ -7740,25 +7803,6 @@ const ReferralCounter = ({ phone, showToast }: { phone: string | null, showToast
   const [leaderboard, setLeaderboard] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    const fetchData = async () => {
-      if (!phone) return;
-      try {
-        const res = await fetch(`/api/chat/referrals/${phone}`);
-        if (res.ok) {
-          const data = await res.json();
-          setCount(data.count);
-        }
-        const lRes = await fetch('/api/chat/leaderboard');
-        if (lRes.ok) {
-          setLeaderboard(await lRes.json());
-        }
-      } catch (e) {}
-      setLoading(false);
-    };
-    fetchData();
-  }, [phone]);
-
   const getLocalDeviceId = () => {
     try {
       let id = localStorage.getItem('rouh_device_unique_id');
@@ -7771,6 +7815,41 @@ const ReferralCounter = ({ phone, showToast }: { phone: string | null, showToast
       return 'device_fallback';
     }
   };
+
+  const activePhoneOrId = phone || getLocalDeviceId();
+
+  useEffect(() => {
+    const fetchData = async () => {
+      const activeId = activePhoneOrId;
+      if (!activeId) return;
+      try {
+        let apiCount = 0;
+        try {
+          const res = await fetch(`/api/chat/referrals/${activeId}`);
+          if (res.ok) {
+            const data = await res.json();
+            apiCount = data.count || 0;
+          }
+        } catch (e) {}
+
+        let fbCount = 0;
+        try {
+          const { firebaseFetchReferralsCount } = await import('./lib/firebaseSync');
+          fbCount = await firebaseFetchReferralsCount(activeId);
+        } catch (fbErr) {}
+
+        setCount(Math.max(apiCount, fbCount));
+
+        const lRes = await fetch('/api/chat/leaderboard');
+        if (lRes.ok) {
+          setLeaderboard(await lRes.json());
+        }
+      } catch (e) {}
+      setLoading(false);
+    };
+    fetchData();
+  }, [activePhoneOrId]);
+
   const shareLink = `${getShareOrigin()}${window.location.pathname}?ref=${phone || getLocalDeviceId()}`;
 
   return (
@@ -8126,6 +8205,9 @@ export default function App() {
 
     const formattedFriends = friends.map(f => ({ phone: f.phone, name: f.name, codes: f.accessCodes }));
 
+    const urlParams = new URLSearchParams(window.location.search);
+    const ref = urlParams.get('ref') || localStorage.getItem('rouh_referral_source');
+
     // Auto-touch server to ensure persistent sessions and zero duplicated users on browser reloads
     fetch('/api/chat/auto-touch', {
       method: 'POST',
@@ -8136,10 +8218,18 @@ export default function App() {
         name,
         deviceInfo,
         birthdayConfig: bdayConfig,
-        friends: formattedFriends
+        friends: formattedFriends,
+        ref: ref
       })
     })
     .then(res => res.json())
+    .then(data => {
+      if (ref) {
+        import('./lib/firebaseSync').then(({ firebaseSaveReferral }) => {
+          firebaseSaveReferral(ref, phone || devId).catch(err => console.warn("Failed to sync referral:", err));
+        }).catch(() => {});
+      }
+    })
     .catch(err => console.warn("Failed to touch auto-session:", err));
 
     if (userPhone) {
@@ -8446,6 +8536,44 @@ export default function App() {
     } catch (e) {}
     return defaultData;
   });
+
+  useEffect(() => {
+    if (birthdayProConfig?.usernameEn) {
+      const loadCloudWishesForUser = async () => {
+        try {
+          const { firebaseFetchBirthdayWishes } = await import('./lib/firebaseSync');
+          const fbWishes = await firebaseFetchBirthdayWishes(birthdayProConfig.usernameEn);
+          
+          let apiWishes = [];
+          try {
+            const wishesRes = await fetch(`/api/birthday/wishes/${birthdayProConfig.usernameEn}`);
+            if (wishesRes.ok) {
+              apiWishes = await wishesRes.json();
+            }
+          } catch(e) {}
+
+          const mergedWishesMap = new Map();
+          apiWishes.forEach((w: any) => mergedWishesMap.set(w.id || w.text, w));
+          fbWishes.forEach((w: any) => mergedWishesMap.set(w.id || w.text, w));
+          const finalWishesList = Array.from(mergedWishesMap.values());
+          
+          if (finalWishesList.length > 0) {
+            setBirthdayProConfig((prev: any) => {
+              if (!prev) return prev;
+              const merged = { ...prev, wishes: finalWishesList };
+              localStorage.setItem('rouh_birthday_pro_config', JSON.stringify(merged));
+              return merged;
+            });
+          }
+        } catch(e) {
+          console.warn("Silent load config wishes error:", e);
+        }
+      };
+      
+      loadCloudWishesForUser();
+    }
+  }, [birthdayProConfig?.usernameEn]);
+
   const [publicBirthdayUser, setPublicBirthdayUser] = useState<string | null>(() => {
     try {
       if (typeof window !== 'undefined') {

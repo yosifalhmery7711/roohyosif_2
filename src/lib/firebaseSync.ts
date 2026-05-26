@@ -522,18 +522,134 @@ export async function firebaseSaveUsageTips(tips: any[]) {
 
 // Fetch customizable randomized tips lists (a/aa/abcdf_usages)
 export async function firebaseFetchUsageTips(): Promise<any[] | null> {
-  if (isFirebasePlaceholder) return null;
+  if (isFirebasePlaceholder) {
+    try {
+      const cached = localStorage.getItem('rouh_usage_guide_tips');
+      return cached ? JSON.parse(cached) : null;
+    } catch (e) { return null; }
+  }
   const path = 'a/aa/abcdf_usages/tips';
   try {
     const colRef = doc(db, 'a', 'aa', 'abcdf_usages', 'tips');
     const docSnap = await getDoc(colRef);
     if (docSnap.exists()) {
-      return docSnap.data().tips || null;
+      const tips = docSnap.data().tips || null;
+      if (tips && tips.length > 0) {
+        try {
+          localStorage.setItem('rouh_usage_guide_tips', JSON.stringify(tips));
+        } catch (e) {}
+      }
+      return tips;
     }
     return null;
-  } catch (e) {
-    console.error('Error fetching usage tips from Firestore:', e);
+  } catch (e: any) {
+    const isOffline = e?.message?.includes('offline') || e?.code === 'unavailable' || (typeof navigator !== 'undefined' && !navigator.onLine);
+    if (isOffline) {
+      console.warn('Firebase client is offline, using cached usage tips.');
+      try {
+        const cached = localStorage.getItem('rouh_usage_guide_tips');
+        return cached ? JSON.parse(cached) : null;
+      } catch (err) {
+        return null;
+      }
+    }
+    console.warn('Error fetching usage tips from Firestore (non-fatal):', e?.message || e);
     return null;
+  }
+}
+
+// Save birthday configuration to Firestore
+export async function firebaseSaveBirthdayConfig(usernameEn: string, config: any) {
+  if (isFirebasePlaceholder) return;
+  const path = `a/ab/birthdays/${usernameEn}`;
+  try {
+    const docRef = doc(db, 'a', 'ab', 'birthdays', usernameEn);
+    await setDoc(docRef, {
+      ...config,
+      updatedAt: Date.now()
+    });
+  } catch (e) {
+    console.error('Failed to save birthday config to Firebase:', e);
+  }
+}
+
+// Fetch birthday configuration from Firestore
+export async function firebaseFetchBirthdayConfig(usernameEn: string): Promise<any | null> {
+  if (isFirebasePlaceholder) return null;
+  const path = `a/ab/birthdays/${usernameEn}`;
+  try {
+    const docRef = doc(db, 'a', 'ab', 'birthdays', usernameEn);
+    const docSnap = await getDoc(docRef);
+    if (docSnap.exists()) {
+      return docSnap.data();
+    }
+  } catch (e) {
+    console.error('Failed to fetch birthday config from Firebase:', e);
+  }
+  return null;
+}
+
+// Save birthday wish (congratulations) to Firestore
+export async function firebaseSaveBirthdayWish(targetUsernameEn: string, wish: any) {
+  if (isFirebasePlaceholder) return;
+  try {
+    const colRef = collection(db, 'a', 'ab', 'wishes');
+    const docId = `${targetUsernameEn}_${wish.id || Math.random().toString(36).substring(2, 9)}`;
+    await setDoc(doc(colRef, docId), {
+      ...wish,
+      targetUsernameEn,
+      timestamp: wish.timestamp || new Date().toISOString()
+    });
+  } catch (e) {
+    console.error('Failed to save birthday wish to Firebase:', e);
+  }
+}
+
+// Fetch wishes (congratulations) for a given target birthday username
+export async function firebaseFetchBirthdayWishes(targetUsernameEn: string): Promise<any[]> {
+  if (isFirebasePlaceholder) return [];
+  try {
+    const colRef = collection(db, 'a', 'ab', 'wishes');
+    const q = query(colRef, where('targetUsernameEn', '==', targetUsernameEn));
+    const querySnapshot = await getDocs(q);
+    const wishes: any[] = [];
+    querySnapshot.forEach((doc) => {
+      wishes.push(doc.data());
+    });
+    return wishes.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+  } catch (e) {
+    console.error('Failed to fetch birthday wishes from Firebase:', e);
+    return [];
+  }
+}
+
+// Save invitation/referral record to Firestore
+export async function firebaseSaveReferral(referrerId: string, joinedId: string) {
+  if (isFirebasePlaceholder) return;
+  try {
+    const docId = `${referrerId.toLowerCase().replace(/[^a-z0-5a-z0-9]/g, '_')}_${joinedId.toLowerCase().replace(/[^a-z0-9]/g, '_')}`;
+    const docRef = doc(db, 'a', 'ab', 'referrals', docId);
+    await setDoc(docRef, {
+      referrerId,
+      joinedId,
+      timestamp: new Date().toISOString()
+    });
+  } catch (e) {
+    console.error('Failed to save referral to Firebase:', e);
+  }
+}
+
+// Fetch referrals count for a given referrerId
+export async function firebaseFetchReferralsCount(referrerId: string): Promise<number> {
+  if (isFirebasePlaceholder) return 0;
+  try {
+    const colRef = collection(db, 'a', 'ab', 'referrals');
+    const q = query(colRef, where('referrerId', '==', referrerId));
+    const querySnapshot = await getDocs(q);
+    return querySnapshot.size;
+  } catch (e) {
+    console.error('Failed to fetch referrals count from Firebase:', e);
+    return 0;
   }
 }
 
