@@ -2965,18 +2965,21 @@ const ProfessionalBirthdayTool = ({
       }
 
       // 2. Determine usernameEn if not set
-      let username = config.usernameEn;
+      let username = (config.usernameEn || '').toLowerCase().trim();
       if (!username && translatedNames[0].en) {
-        username = translatedNames[0].en.toLowerCase().replace(/[^a-z0-9]/g, '_') + '_' + Math.random().toString(36).substring(7);
+        username = (translatedNames[0].en.toLowerCase().replace(/[^a-z0-9]/g, '_') + '_' + Math.random().toString(36).substring(7)).toLowerCase();
       }
+
+      const localBgB64 = localStorage.getItem('rouh_birthday_last_bg');
+      const localMusicB64 = localStorage.getItem('rouh_birthday_last_music');
 
       const finalConfig = {
         ...config,
         names: translatedNames,
         birthDate,
         bgType,
-        bgValue,
-        musicUrl,
+        bgValue: (bgType === 'image' && localBgB64 && localBgB64.startsWith('data:')) ? localBgB64 : bgValue,
+        musicUrl: (localMusicB64 && localMusicB64.startsWith('data:')) ? localMusicB64 : musicUrl,
         musicFileName,
         textColor,
         usernameEn: username,
@@ -3482,8 +3485,9 @@ const PublicBirthdayPage = ({ usernameEn, onBack }: { usernameEn: string, onBack
   const loadConfig = async () => {
     try {
       let data = null;
+      const cleanUsername = usernameEn.toLowerCase().trim();
       try {
-        const res = await fetch(`/api/birthday/config/${usernameEn}`);
+        const res = await fetch(`/api/birthday/config/${cleanUsername}`);
         if (res.ok) {
           data = await res.json();
         }
@@ -3494,7 +3498,7 @@ const PublicBirthdayPage = ({ usernameEn, onBack }: { usernameEn: string, onBack
       if (!data) {
         try {
           const { firebaseFetchBirthdayConfig } = await import('./lib/firebaseSync');
-          data = await firebaseFetchBirthdayConfig(usernameEn);
+          data = await firebaseFetchBirthdayConfig(cleanUsername);
         } catch (fbErr) {
           console.error("Firebase profile fetch failed", fbErr);
         }
@@ -3503,11 +3507,11 @@ const PublicBirthdayPage = ({ usernameEn, onBack }: { usernameEn: string, onBack
       if (data) {
         try {
           const { firebaseFetchBirthdayWishes } = await import('./lib/firebaseSync');
-          const fbWishes = await firebaseFetchBirthdayWishes(usernameEn);
+          const fbWishes = await firebaseFetchBirthdayWishes(cleanUsername);
           
           let apiWishes = [];
           try {
-            const wishesRes = await fetch(`/api/birthday/wishes/${usernameEn}`);
+            const wishesRes = await fetch(`/api/birthday/wishes/${cleanUsername}`);
             if (wishesRes.ok) {
               apiWishes = await wishesRes.json();
             }
@@ -3655,6 +3659,13 @@ const PublicBirthdayPage = ({ usernameEn, onBack }: { usernameEn: string, onBack
     }
   };
 
+  const isStandaloneMode = typeof window !== 'undefined' && (
+    window.matchMedia('(display-mode: standalone)').matches || 
+    (window.navigator as any).standalone === true
+  );
+
+  const [showPwaBanner, setShowPwaBanner] = useState(!isStandaloneMode);
+
   if (loading) return (
     <div className="fixed inset-0 bg-[#0a0a0b] flex items-center justify-center">
       <RoohLoader />
@@ -3671,15 +3682,33 @@ const PublicBirthdayPage = ({ usernameEn, onBack }: { usernameEn: string, onBack
   );
 
   return (
-    <div className="fixed inset-0 z-[500] bg-black">
+    <div className="fixed inset-0 z-[500] bg-black flex flex-col">
       {config.musicUrl && <audio ref={audioRef} src={config.musicUrl} autoPlay loop />}
-      <div className="absolute top-6 right-6 z-[600]">
-         <button onClick={onBack} className="p-3 bg-white text-black rounded-2xl shadow-2xl">
+      
+      {showPwaBanner && (
+        <div className="bg-gradient-to-r from-blue-700/95 via-[#1a1c22] to-indigo-800/95 text-white p-3 text-center text-xs font-black italic flex items-center justify-between px-4 shrink-0 relative z-[700] border-b border-indigo-500/20 shadow-lg gap-4">
+          <div className="flex items-center gap-2">
+            <span className="text-base">📲</span>
+            <span className="text-right leading-relaxed">تطبيق "روح" مثبت على جهازك؟ سيفتح هذا الرابط بداخله مباشرة. إذا كنت في المتصفح، يمكنك تثبيت التطبيق الآن عبر الخيارات لتجربة كاملة الصوت والريادة!</span>
+          </div>
+          <button 
+            onClick={() => setShowPwaBanner(false)}
+            className="text-white/60 hover:text-white px-3 py-1.5 text-xs bg-white/10 hover:bg-white/20 rounded-xl transition-all font-black"
+          >
+            إغلاق
+          </button>
+        </div>
+      )}
+
+      <div className={cn("absolute z-[600] transition-all duration-300", showPwaBanner ? "top-16 right-6" : "top-6 right-6")}>
+         <button onClick={onBack} className="p-3 bg-white text-black rounded-2xl shadow-2xl transition-transform active:scale-95">
            <ChevronRight size={24} />
          </button>
       </div>
 
-      <RoyalBirthdayExperience config={config} onAddWish={handleAddWish} autoOpenWish={true} initialTab="wishes" />
+      <div className="flex-1 w-full relative">
+        <RoyalBirthdayExperience config={config} onAddWish={handleAddWish} autoOpenWish={true} initialTab="wishes" />
+      </div>
     </div>
   );
 };
@@ -7838,7 +7867,13 @@ const ReferralCounter = ({ phone, showToast }: { phone: string | null, showToast
           fbCount = await firebaseFetchReferralsCount(activeId);
         } catch (fbErr) {}
 
-        setCount(Math.max(apiCount, fbCount));
+        const finalVal = Math.max(apiCount, fbCount);
+        setCount(prev => {
+          if (finalVal > prev && prev > 0) {
+            showToast('🥳 رائع! انضم عضو جديد الآن عبر رابط إحالتك المميز!', 'success');
+          }
+          return finalVal;
+        });
 
         const lRes = await fetch('/api/chat/leaderboard');
         if (lRes.ok) {
@@ -7847,7 +7882,10 @@ const ReferralCounter = ({ phone, showToast }: { phone: string | null, showToast
       } catch (e) {}
       setLoading(false);
     };
+
     fetchData();
+    const interval = setInterval(fetchData, 4500); // Poll every 4.5 seconds for background real-time tracking
+    return () => clearInterval(interval);
   }, [activePhoneOrId]);
 
   const shareLink = `${getShareOrigin()}${window.location.pathname}?ref=${phone || getLocalDeviceId()}`;

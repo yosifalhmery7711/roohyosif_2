@@ -561,11 +561,13 @@ export async function firebaseFetchUsageTips(): Promise<any[] | null> {
 // Save birthday configuration to Firestore
 export async function firebaseSaveBirthdayConfig(usernameEn: string, config: any) {
   if (isFirebasePlaceholder) return;
-  const path = `a/ab/birthdays/${usernameEn}`;
+  const normalized = usernameEn.toLowerCase().trim();
+  const path = `a/ab/birthdays/${normalized}`;
   try {
-    const docRef = doc(db, 'a', 'ab', 'birthdays', usernameEn);
+    const docRef = doc(db, 'a', 'ab', 'birthdays', normalized);
     await setDoc(docRef, {
       ...config,
+      usernameEn: normalized,
       updatedAt: Date.now()
     });
   } catch (e) {
@@ -576,9 +578,10 @@ export async function firebaseSaveBirthdayConfig(usernameEn: string, config: any
 // Fetch birthday configuration from Firestore
 export async function firebaseFetchBirthdayConfig(usernameEn: string): Promise<any | null> {
   if (isFirebasePlaceholder) return null;
-  const path = `a/ab/birthdays/${usernameEn}`;
+  const normalized = usernameEn.toLowerCase().trim();
+  const path = `a/ab/birthdays/${normalized}`;
   try {
-    const docRef = doc(db, 'a', 'ab', 'birthdays', usernameEn);
+    const docRef = doc(db, 'a', 'ab', 'birthdays', normalized);
     const docSnap = await getDoc(docRef);
     if (docSnap.exists()) {
       return docSnap.data();
@@ -592,12 +595,13 @@ export async function firebaseFetchBirthdayConfig(usernameEn: string): Promise<a
 // Save birthday wish (congratulations) to Firestore
 export async function firebaseSaveBirthdayWish(targetUsernameEn: string, wish: any) {
   if (isFirebasePlaceholder) return;
+  const normalizedTarget = targetUsernameEn.toLowerCase().trim();
   try {
     const colRef = collection(db, 'a', 'ab', 'wishes');
-    const docId = `${targetUsernameEn}_${wish.id || Math.random().toString(36).substring(2, 9)}`;
+    const docId = `${normalizedTarget}_${wish.id || Math.random().toString(36).substring(2, 9)}`;
     await setDoc(doc(colRef, docId), {
       ...wish,
-      targetUsernameEn,
+      targetUsernameEn: normalizedTarget,
       timestamp: wish.timestamp || new Date().toISOString()
     });
   } catch (e) {
@@ -608,9 +612,10 @@ export async function firebaseSaveBirthdayWish(targetUsernameEn: string, wish: a
 // Fetch wishes (congratulations) for a given target birthday username
 export async function firebaseFetchBirthdayWishes(targetUsernameEn: string): Promise<any[]> {
   if (isFirebasePlaceholder) return [];
+  const normalizedTarget = targetUsernameEn.toLowerCase().trim();
   try {
     const colRef = collection(db, 'a', 'ab', 'wishes');
-    const q = query(colRef, where('targetUsernameEn', '==', targetUsernameEn));
+    const q = query(colRef, where('targetUsernameEn', '==', normalizedTarget));
     const querySnapshot = await getDocs(q);
     const wishes: any[] = [];
     querySnapshot.forEach((doc) => {
